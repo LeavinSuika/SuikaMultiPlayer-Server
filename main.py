@@ -12,11 +12,6 @@ config_path = Path(__file__).parent / 'config' / 'config.yaml'
 with open(config_path, 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%H:%M:%S'
-)
 
 if __name__ == "__main__":
     host = config["connection"]["host"]
