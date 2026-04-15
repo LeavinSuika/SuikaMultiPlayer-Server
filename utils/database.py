@@ -4,6 +4,8 @@
 """
 
 import logging
+import yaml
+import uuid
 from utils import tools
 from pathlib import Path
 from datetime import datetime, timezone
@@ -15,6 +17,11 @@ logger = logging.getLogger(__name__)
 db_path = Path(__file__).parent.parent / 'data' / 'database.db'
 # 日期时间格式常量
 DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+# 读取配置
+config_path = Path(__file__).parent.parent / 'config' / 'config.yaml'
+with open(config_path, 'r', encoding='utf-8') as f:
+    config = yaml.safe_load(f)
 
 async def init_database():
     """
@@ -107,7 +114,15 @@ async def init_database():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_ban_ip_value ON ban_ip(ip)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_ban_ip_is_active ON ban_ip(is_active)")
         
-    logger.info("数据表初始化完成!")
+        hash_pwd = tools.hash_pwd(config.get("database").get("default_admin_pwd"))
+        name = config.get("database").get("default_admin")
+        await db.execute("""
+            INSERT INTO users (user_uuid, user_name, pwd, ip, nickname, role)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """,(str(uuid.uuid4()), name, hash_pwd, "127.0.0.1", name, "admin"))
+        await db.commit()
+        
+    logger.info("数据库初始化完成!")
     return True
 
 async def register(user_uuid, user_name, pwd, ip, nickname):

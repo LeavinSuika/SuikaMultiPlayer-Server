@@ -1,5 +1,9 @@
 version: 1.0
 
+database:
+  default_admin: "Leavin_Suika"
+  default_admin_pwd: "password"
+
 api:
   get_api: "https://music-api.gdstudio.xyz/api.php?types=url&source={source}&id={track_id}"
 
