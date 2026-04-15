@@ -114,13 +114,19 @@ async def init_database():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_ban_ip_value ON ban_ip(ip)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_ban_ip_is_active ON ban_ip(is_active)")
         
-        hash_pwd = tools.hash_pwd(config.get("database").get("default_admin_pwd"))
-        name = config.get("database").get("default_admin")
-        await db.execute("""
-            INSERT INTO users (user_uuid, user_name, pwd, ip, nickname, role)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """,(str(uuid.uuid4()), name, hash_pwd, "127.0.0.1", name, "admin"))
-        await db.commit()
+        cursor = await db.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+        row = await cursor.fetchone()
+        admin_count = row[0] if row else 0
+        
+        if admin_count == 0:
+            hash_pwd = tools.hash_pwd(config.get("database").get("default_admin_pwd"))
+            name = config.get("database").get("default_admin")
+            
+            await db.execute("""
+                INSERT INTO users (user_uuid, user_name, pwd, ip, nickname, role)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """,(str(uuid.uuid4()), name, hash_pwd, "127.0.0.1", name, "admin"))
+            await db.commit()
         
     logger.info("数据库初始化完成!")
     return True
