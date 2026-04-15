@@ -1,0 +1,7 @@
+version: 1.0
+
+api:
+  get_api: "https://music-api.gdstudio.xyz/api.php?types=url&source={source}&id={track_id}"
+
+connection:
+  heartbeat_timeout: 60
