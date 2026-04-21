@@ -13,6 +13,8 @@ with open(config_path, 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 
 
+
+
 if __name__ == "__main__":
     host = config["connection"]["host"]
     port = config["connection"]["port"]

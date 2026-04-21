@@ -128,7 +128,7 @@ async def init_database():
             """,(str(uuid.uuid4()), name, hash_pwd, "127.0.0.1", name, "admin"))
             await db.commit()
         
-    logger.info("数据库初始化完成!")
+    logger.info("数据库初始化完成")
     return True
 
 async def register(user_uuid, user_name, pwd, ip, nickname):
@@ -809,6 +809,34 @@ async def _db_fetch(table, where_field, where_value):
             logger.error(f"{where_field} 查询失败:{e}")
             return None
 
+async def fetch_all_room_id():
+    """
+    查询所有房间id
+        
+    Returns:
+        成功返回 [room_id, ...] 列表
+        无数据返回空列表 []
+        发生异常返回 None
+    """
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys=ON")
+        db.row_factory = aiosqlite.Row
+        try:
+            cursor = await db.execute(f"""
+                SELECT room_id FROM rooms
+            """)
+            
+            rows = await cursor.fetchall()
+            if not rows:
+                logger.warning(f"未查询到房间id")
+                return []
+            
+            return [row["room_id"] for row in rows]
+            
+        except Exception as e:
+            logger.error(f"房间id 查询失败:{e}")
+            return None
+
 async def fetch_user(user_uuid):
     """
     通过uuid查询用户信息
@@ -937,7 +965,7 @@ async def count_admins():
 # 测试
 async def test():
     await init_database() 
-    result = await fetch_user("123123")
+    result = await fetch_all_room_id()
     logger.info(result)
 
 if __name__ == "__main__":
@@ -945,7 +973,7 @@ if __name__ == "__main__":
     # 临时配置 logging
     logging.basicConfig(
         level=logging.DEBUG,
-        format='%(asctime)s - %(levelname)s - %(message)s',
+        format='[%(asctime)s %(levelname)s] [%(module)s] %(message)s',
         datefmt='%H:%M:%S'
     )
     

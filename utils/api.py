@@ -5,6 +5,7 @@
 
 import logging
 import yaml
+import random
 from pathlib import Path
 from datetime import datetime, timezone
 import asyncio
@@ -13,6 +14,7 @@ from utils import database
 from utils import tools
 from utils import music_link_fetcher
 from pydantic import BaseModel, Field
+from typing import Optional
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 
@@ -26,43 +28,107 @@ with open(config_path, 'r', encoding='utf-8') as f:
 # 日志配置
 logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
+        format='[%(asctime)s %(levelname)s] [%(module)s] %(message)s',
         datefmt='%H:%M:%S'
     )
 
-# 心跳/房间处理
-heartbeats = {}
-user_rooms = {}
+# 临时数据表
+heartbeats = {}     # 用户心跳时间表 {user_uuid: time, ...}
+user_rooms = {}     # 用户加入房间表 {user_uuid: room_id, ...}
+room_users = {}     # 房间内用户表 {room_id: [user_uuid, ...], ...}
+room_leader_user = {}        # 各个房间同步标准用户表 {room_id: user_uuid, ...}
+room_playstatus = {}        # 各个房间播放的状态表 {room_id: {track_id: int, is_played: bool, pos: int}, ...}
+room_playlist = {}          # 各个房间的音乐列表 {room_id: [track_id, ...], ...}
+
+# 初始化房间内用户表
+async def init_room_users():
+    room_list = await database.fetch_all_room_id()
+    room_users = dict.fromkeys(room_list, [])
+    return room_users
+
+# 同步房间列表循环
+async def room_users_sync():
+    while True:
+        await asyncio.sleep(10)
+        room_list = await database.fetch_all_room_id()
+        for room_id in room_users:
+            if room_id not in room_list:
+                room_users[room_id] = []
+
+HEARTBEAT_TIMEOUT = config.get("connection").get("heartbeat_timeout")
 
 state_lock = asyncio.Lock()
 
-HEARTBEAT_TIMEOUT = config.get("connection").get("heartbeat_timeout")
+# 播放状态
+class PlaybackState(BaseModel):
+    track_id: str
+    is_played: bool
+    pos: int = Field(..., ge=0)
+    timestamp: str
 
 class HeartbeatRequest(BaseModel):
     user_uuid: str
     room_id: int | None = None
+    playback_state: Optional[PlaybackState] = None
 
+# 心跳循环
 async def clean_heartbeats():
     while True:
         await asyncio.sleep(60)
         now = datetime.now(timezone.utc)
-        expired = []
         
         async with state_lock:
             for uuid, t in list(heartbeats.items()):
                 if (now - t).total_seconds() > HEARTBEAT_TIMEOUT:
                     heartbeats.pop(uuid, None)
+                    room_users[user_rooms[uuid]].remove(uuid)
                     user_rooms.pop(uuid, None)
 
+# 歌曲时间同步循环
+async def track_pos_align():
+    while True:
+        await asyncio.sleep(1)
+        async with state_lock:
+            for room_id, detail in room_playstatus:
+                if detail["is_played"]:
+                    room_playstatus[room_id]["pos"] = detail["pos"] + 1000
+                    
+# 时间同步基准用户设置循环
+async def room_leader_user_set():
+    while True:
+        await asyncio.sleep(10)
+        async with state_lock:
+            all_rooms = list(room_users.keys)
+            be_set_rooms = list(room_leader_user.keys)
+            rooms = [room for room in all_rooms if room not in be_set_rooms]
+            for room in rooms:
+                if room_users[room] is not []:
+                    users = room_users[room]
+                    room_leader_user[room] = random.choice(users)
+                    
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await database.init_database()
-    task = asyncio.create_task(clean_heartbeats())
+    room_users = await init_room_users()
+    logger.info("房间内用户表初始化成功")
+    heartbeat_task = asyncio.create_task(clean_heartbeats())
     logger.info("心跳清理任务已启动")
+    pos_align_task = asyncio.create_task(track_pos_align())
+    logger.info("歌曲时间同步任务已启动")
+    room_leader_user_set_task = asyncio.create_task(room_leader_user_set())
+    logger.info("时间同步基准用户设置任务已启动")
+    room_users_sync_task = asyncio.create_task(room_users_sync())
+    logger.info("同步房间列表任务已启动")
     
     yield
-    task.cancel()
+    heartbeat_task.cancel()
     logger.info("心跳清理任务已停止")
+    pos_align_task.cancel()
+    logger.info("歌曲时间同步任务已停止")
+    room_leader_user_set_task.cancel()
+    logger.info("时间同步基准用户设置任务已停止")
+    room_users_sync_task.cancel()
+    logger.info("同步房间列表任务已停止")
 
 app = FastAPI(lifespan=lifespan)
 
@@ -164,6 +230,14 @@ class MusicLinkGet(BaseModel):
 
 class LrcLinkGet(BaseModel):
     track_id: str
+    
+class PlaybackSync(BaseModel):
+    room_id: str
+    track_id: str
+    position: int
+    is_played: bool
+    
+    
 
 # api处理
 # 心跳api
@@ -171,8 +245,31 @@ class LrcLinkGet(BaseModel):
 async def heartbeat(info: HeartbeatRequest):
     async with state_lock:
         heartbeats[info.user_uuid] = datetime.now(timezone.utc)
-        user_rooms[info.user_uuid] = info.room_id
-    return {"status": "ok"}
+        
+        if info.room_id is None:
+            try:
+                room_users[user_rooms[info.user_uuid]].remove(info.user_uuid)
+                user_rooms.pop(info.user_uuid, None)
+            except ValueError or KeyError:
+                logger.debug("用户未加入任何房间，跳过删除")
+            except Exception as e:
+                logger.error(f"用户房间表修改失败: {e}")
+                
+        else:
+            try:
+                user_rooms[info.user_uuid] = info.room_id
+                if info.user_uuid not in room_users[info.room_id]:
+                    room_users[info.room_id].append(info.user_uuid)
+            except Exception as e:
+                return {"status": False, "message": "房间ID不存在"}
+        
+        if info.user_uuid == room_leader_user[info.room_id]:
+            status = dict(info.playback_state)
+            now = datetime.now(timezone.utc)
+            status["pos"] = status["pos"] + (now.timestamp() - status["timestamp"].timestamp()) * 1000
+            status.pop["timestamp", None]
+            room_playstatus[info.room_id] = status
+    return {"status": True}
 
 # 获取房间在线用户
 @app.get("/api/room/{room_id}/online")
@@ -204,7 +301,7 @@ async def register(info: Register, request: Request):
     if success:
         
         success1, _ = await database.set_status(user_uuid, "online")
-        success2, _ = await database.set_lastlogin(user_uuid, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
+        success2, _ = await database.set_lastlogin(user_uuid, datetime.now(timezone.utc).strftime(tools.DATETIME_FORMAT))
         if not success1 or not success2:
             return {"success": False, "message": "系统错误，请稍后再试"}
         
@@ -229,7 +326,7 @@ async def login(info: Login, request: Request):
             return {"success": False, "message": msg}
 
         success1, _ = await database.set_status(result, "online")
-        success2, _ = await database.set_lastlogin(result, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
+        success2, _ = await database.set_lastlogin(result, datetime.now(timezone.utc).strftime(tools.DATETIME_FORMAT))
         success3, _ = await database.set_ip(result, client_ip)
         if not success1 or not success2 or not success3:
             return {"success": False, "message": "系统错误，请稍后再试"}
@@ -260,7 +357,7 @@ async def fetch_user(info: FetchUser, request: Request):
     if user_info["status"] == "offline":
         success1, _ = await database.set_status(user_info["user_uuid"], "online")
         success2, _ = await database.set_ip(user_info["user_uuid"], client_ip)
-        success3, _ = await database.set_lastlogin(user_info["user_uuid"], datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
+        success3, _ = await database.set_lastlogin(user_info["user_uuid"], datetime.now(timezone.utc).strftime(tools.DATETIME_FORMAT))
         if not success1 or not success2 or not success3:
             return {"success": False, "message": "系统错误，请稍后再试"}
     
@@ -396,6 +493,7 @@ async def create_room(info: CreateRoom):
     
     success, msg = await database.create_room(info.name, info.creator_uuid, info.is_public)
     if success:
+        room_users[msg] = []
         return {"success": True, "room_id": msg}
     else:
         return {"success": False, "message": msg}
@@ -407,6 +505,9 @@ async def delete_room(info: DeleteRoom):
     if passed:
         success, msg = await database.delete_room(info.room_id)
         if success:
+            tmp = room_users.pop(info.room_id, None)
+            if tmp is None:
+                logger.warning("临时房间表内room_id删除失败")
             return {"success": True}
         else:
             return {"success": False, "message": msg}
@@ -455,7 +556,23 @@ async def join_room(info: JoinRoom):
     
     success, msg = await database.join_room(info.room_id, info.user_uuid)
     if success:
-        return {"success": True}
+        async with state_lock:
+            try:
+                user_rooms[info.user_uuid] = info.room_id
+                room_users[info.room_id].append(info.user_uuid)
+            except Exception:
+                pass
+            
+        playlist = room_playlist[info.room_id]
+        playstatus = room_playstatus[info.room_id]
+        playstatus["timestamp"] = datetime.now(timezone.utc).strftime(tools.DATETIME_FORMAT)
+        
+        return {"success": True, 
+                "details": {
+                    "playlist": playlist, 
+                    "playstatus": playstatus
+                    }
+                }
     else:
         return {"success": False, "message": msg}
 
