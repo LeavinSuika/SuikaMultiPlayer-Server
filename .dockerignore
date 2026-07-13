@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Runtime data (mounted as volumes at runtime)
+data/
+logs/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
