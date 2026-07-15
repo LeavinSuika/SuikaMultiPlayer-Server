@@ -1,7 +1,7 @@
 version: 1.0
 
 database:
-  default_admin: "Leavin_Suika"
+  default_admin: "admin"
   default_admin_pwd: "password"
 
 api:
