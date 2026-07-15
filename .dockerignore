@@ -7,6 +7,7 @@ build/
 
 # Virtual environment
 .venv/
+venv/
 
 # Git
 .git/
@@ -15,6 +16,24 @@ build/
 # IDE
 .vscode/
 .idea/
+
+# Environment files (may contain secrets)
+.env
+.env.*
+
+# Python version
+.python-version
+
+# Documentation
+README.md
+
+# Cache directories
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Log files
+*.log
 
 # Runtime data (mounted as volumes at runtime)
 data/

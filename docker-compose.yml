@@ -1,0 +1,11 @@
+services:
+  server:
+    build: .
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # 可选：覆盖默认配置
+      # - ./config/config.yaml:/app/config/config.yaml
+    restart: unless-stopped

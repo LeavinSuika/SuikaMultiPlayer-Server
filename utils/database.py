@@ -289,12 +289,12 @@ async def _set_item(table, where_field, where_value, set_field, set_value):
 async def set_avatar(user_uuid, avatar_url, avatar_key):
     """
     设置用户头像
-    
+
     Args:
         user_uuid: 用户UUID（唯一）
         avatar_url: 头像url
         avatar_key: 头像唯一密钥
-        
+
     Returns:
         成功返回 (True, None)
         失败返回 (False, error_message)
@@ -302,15 +302,21 @@ async def set_avatar(user_uuid, avatar_url, avatar_key):
     async with aiosqlite.connect(db_path) as db:
         await db.execute("PRAGMA foreign_keys=ON")
         try:
-            cursor = await db.execute("""
-                UPDATE users SET avatar_url = ?, avatar_key = ? WHERE user_uuid = ?
-            """,(avatar_url, avatar_key, user_uuid))
-            
-            if cursor.rowcount == 0:
+            # 先确认用户存在
+            cursor = await db.execute(
+                "SELECT 1 FROM users WHERE user_uuid = ?", (user_uuid,)
+            )
+            row = await cursor.fetchone()
+            if row is None:
                 logger.warning(f"{user_uuid} 不存在，头像更新失败")
                 return False, f"{user_uuid} 不存在，头像更新失败"
+
+            await db.execute(
+                "UPDATE users SET avatar_url = ?, avatar_key = ? WHERE user_uuid = ?",
+                (avatar_url, avatar_key, user_uuid),
+            )
             await db.commit()
-            
+
             logger.info(f"用户UUID: {user_uuid} - 头像设置成功！")
             return True, None
         except Exception as e:
@@ -828,7 +834,7 @@ async def fetch_all_room_id():
             
             rows = await cursor.fetchall()
             if not rows:
-                logger.warning(f"未查询到房间id")
+                logger.debug(f"未查询到房间id")
                 return []
             
             return [row["room_id"] for row in rows]
@@ -855,10 +861,10 @@ async def fetch_user(user_uuid):
 async def fetch_ban_ip(ip):
     """
     通过ip查询IP封禁信息
-    
+
     Args:
         ip: IP
-        
+
     Returns:
         成功返回 [dict, dict...] 列表
         无数据返回空列表 []
@@ -866,6 +872,51 @@ async def fetch_ban_ip(ip):
     """
     result = await _db_fetch("ban_ip", "ip", ip)
     return result
+
+async def fetch_all_users():
+    """查询所有用户（含 ip 和封禁状态）"""
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys=ON")
+        db.row_factory = aiosqlite.Row
+        try:
+            cursor = await db.execute(
+                "SELECT user_uuid, user_name, nickname, ip, role, is_banned, ban_reason FROM users"
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"查询所有用户失败: {e}")
+            return None
+
+async def fetch_banned_users():
+    """查询所有被封禁用户"""
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys=ON")
+        db.row_factory = aiosqlite.Row
+        try:
+            cursor = await db.execute(
+                "SELECT user_uuid, user_name, nickname, ip, ban_reason, banned_at, pardon_time FROM users WHERE is_banned = 1"
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"查询被封禁用户失败: {e}")
+            return None
+
+async def fetch_banned_ips():
+    """查询所有被封禁IP（仅返回当前有效的）"""
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys=ON")
+        db.row_factory = aiosqlite.Row
+        try:
+            cursor = await db.execute(
+                "SELECT ip, ban_reason, banned_at, pardon_time, operator_uuid FROM ban_ip WHERE is_active = 1"
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"查询被封禁IP失败: {e}")
+            return None
 
 async def fetch_room(room_id):
     """
@@ -900,10 +951,10 @@ async def fetch_room_members(room_id):
 async def fetch_user_joined(user_uuid):
     """
     通过用户uuid查询加入的房间信息
-    
+
     Args:
         user_uuid: 用户uuid
-        
+
     Returns:
         成功返回 [dict, dict...] 列表
         无数据返回空列表 []
@@ -911,6 +962,13 @@ async def fetch_user_joined(user_uuid):
     """
     result = await _db_fetch("room_members", "user_uuid", user_uuid)
     return result
+
+async def is_room_member(room_id, user_uuid):
+    """检查用户是否为房间成员"""
+    members = await fetch_room_members(room_id)
+    if members is None:
+        return False
+    return any(m["user_uuid"] == user_uuid for m in members)
 
 async def fetch_user_room(user_uuid, room_id):
     """
@@ -944,6 +1002,99 @@ async def fetch_user_room(user_uuid, room_id):
             logger.error(f"查询失败:{e}")
             return None
     
+async def fetch_user_rooms_info(user_uuid):
+    """
+    查询用户加入的房间完整信息（含房间名等）
+
+    Returns:
+        成功返回 [dict, ...] 列表
+        无数据返回空列表 []
+    """
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys=ON")
+        db.row_factory = aiosqlite.Row
+        try:
+            cursor = await db.execute("""
+                SELECT r.* FROM rooms r
+                INNER JOIN room_members rm ON r.room_id = rm.room_id
+                WHERE rm.user_uuid = ?
+                ORDER BY r.room_id DESC
+            """, (user_uuid,))
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"查询用户房间失败: {e}")
+            return []
+
+async def fetch_public_rooms():
+    """
+    获取所有公开房间列表
+
+    Returns:
+        成功返回 [dict, dict...] 列表
+        无数据返回空列表 []
+    """
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys=ON")
+        db.row_factory = aiosqlite.Row
+        try:
+            cursor = await db.execute("""
+                SELECT * FROM rooms WHERE is_public = 1 ORDER BY room_id DESC
+            """)
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"查询公开房间失败: {e}")
+            return []
+
+async def transfer_room(room_id, from_uuid, to_uuid):
+    """
+    转让房主身份
+
+    Args:
+        room_id: 房间 ID
+        from_uuid: 原房主 UUID
+        to_uuid: 新房主 UUID
+
+    Returns:
+        成功返回 (True, None)
+        失败返回 (False, error_message)
+    """
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute("PRAGMA foreign_keys=ON")
+        try:
+            # 验证原房主身份
+            cursor = await db.execute("""
+                SELECT role FROM room_members WHERE room_id = ? AND user_uuid = ?
+            """, (room_id, from_uuid))
+            row = await cursor.fetchone()
+            if not row or row[0] != "owner":
+                return False, "只有房主才能转让"
+
+            # 验证目标用户在房间内
+            cursor = await db.execute("""
+                SELECT role FROM room_members WHERE room_id = ? AND user_uuid = ?
+            """, (room_id, to_uuid))
+            row = await cursor.fetchone()
+            if not row:
+                return False, "目标用户不在房间内"
+
+            # 转让：原房主降为 admin，目标成员升为 owner
+            await db.execute("""
+                UPDATE room_members SET role = 'admin' WHERE room_id = ? AND user_uuid = ?
+            """, (room_id, from_uuid))
+            await db.execute("""
+                UPDATE room_members SET role = 'owner' WHERE room_id = ? AND user_uuid = ?
+            """, (room_id, to_uuid))
+            await db.commit()
+
+            logger.info(f"房间 {room_id} 房主已从 {from_uuid} 转让给 {to_uuid}")
+            return True, None
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"转让房主失败: {e}")
+            return False, "转让失败，请稍后再试"
+
 async def count_admins():
     """
     统计管理员数量

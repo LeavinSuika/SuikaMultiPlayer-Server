@@ -11,3 +11,4 @@ connection:
   heartbeat_timeout: 60
   host: "0.0.0.0"
   port: 8001
+  send_delay: 1000

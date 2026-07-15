@@ -8,7 +8,6 @@ import logging
 import yaml
 from pathlib import Path
 import httpx
-from pyncm_async import apis
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -73,29 +72,61 @@ async def lrc_link_get(track_id):
                
                各字段含义:
                - lrc: 原始歌词（带时间戳）
-               - klyric: 卡拉 OK 逐字歌词
                - tlyric: 翻译歌词
                - romalrc: 罗马音歌词
-               - yrc: YRC 格式逐字歌词
-               - ytlrc: YRC 格式翻译歌词
-               - yromalrc: YRC 格式罗马音歌词
+               - yrc: 逐字歌词
+               - ytlrc: 逐字翻译歌词
+               - yromalrc: 逐字罗马音歌词
 
     """
     if track_id == "":
         logger.error("缺少必需的传入项目: 'track_id'")
         return None
-    try:
-        req = await asyncio.wait_for(
-            apis.track.GetTrackLyricsV1(track_id),
-            timeout=DEFAULT_TIMEOUT
-        )
-        return req
-    except asyncio.TimeoutError:
-        logger.error(f"获取歌词超时: 请求超过 {DEFAULT_TIMEOUT} 秒")
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as c:
+        try:
+            req = await c.get(f"https://music.163.com/api/song/lyric?os=pc&id={track_id}&lv=-1&rv=-1&tv=-1&yv=-1")
+            req.raise_for_status()
+            data = req.json()
+            return data
+        except asyncio.TimeoutError:
+            logger.error(f"获取歌词超时: 请求超过 {DEFAULT_TIMEOUT} 秒")
+            return None
+        except Exception as e:
+            logger.error(f"获取歌词失败: {e}")
+            return None
+
+async def song_detail_get(track_id):
+    """
+    获取歌曲详细信息（包括时长）。
+
+    Args:
+        track_id (str): 歌曲的唯一标识 ID。
+
+    Returns:
+        dict or None: 成功时返回歌曲信息字典（含 duration 毫秒），失败返回 None
+    """
+    if not track_id:
+        logger.error("缺少必需的传入项目: 'track_id'")
         return None
-    except Exception as e:
-        logger.error(f"获取歌词失败: {e}")
-        return None
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as c:
+        try:
+            req = await c.get(
+                f"https://music.163.com/api/song/detail?ids=[{track_id}]"
+            )
+            req.raise_for_status()
+            data = req.json()
+            songs = data.get("songs", [])
+            if songs:
+                return songs[0]
+            logger.warning(f"歌曲详情为空, track_id: {track_id}")
+            return None
+        except asyncio.TimeoutError:
+            logger.error(f"获取歌曲详情超时: {track_id}")
+            return None
+        except Exception as e:
+            logger.error(f"获取歌曲详情失败: {e}")
+            return None
+
 
 # 测试
 async def test():
