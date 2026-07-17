@@ -97,30 +97,6 @@ SuikaMultiPlayer-Server/
 
 ---
 
-## ⚙️ 配置文件
-
-编辑 `config/config.yaml`：
-
-```yaml
-# 管理员账号（首次启动时自动创建）
-database:
-  default_admin: "admin"
-  default_admin_pwd: "password"
-
-# 音乐直链获取 API
-api:
-  get_api: "https://music-api.gdstudio.xyz/api.php?types=url&source={source}&id={track_id}"
-
-# 连接配置
-connection:
-  host: "0.0.0.0"          # 监听地址
-  port: 8001               # 监听端口
-  heartbeat_timeout: 60    # 心跳超时（秒）
-  send_delay: 1000         # 播放进度广播间隔（毫秒）
-```
-
----
-
 ## 🔌 API 概览
 
 ### REST API
@@ -212,6 +188,12 @@ connection:
 
 ---
 
+## 🔗 相关链接
+
+- [SuikaMultiPlayer Client](https://github.com/LeavinSuika/SuikaMultiPlayer-Client) — 客户端
+
+---
+
 ## 📄 许可证
 
-本项目基于 MIT 许可证开源，详见 [LICENSE](LICENSE)。
+本项目基于 GNU GPL v3 许可证开源，详见 [LICENSE](LICENSE)。
