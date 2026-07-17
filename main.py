@@ -17,8 +17,10 @@ with open(config_path, 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 
 async def main():
-    config = Config(app="utils.api:app", host="0.0.0.0", port=8001, loop="none")
-    server = Server(config)
+    host = config["connection"]["host"]
+    port = config["connection"]["port"]
+    configs = Config(app="utils.api:app", host=host, port=port, loop="none", access_log=False)
+    server = Server(configs)
     await server.serve()
 
 
@@ -35,7 +37,7 @@ if __name__ == "__main__":
         force=True
     )
 
-    # 文件日志：输出到 logs/ 目录，自动轮转
+    # 文件日志：输出到 /logs
     logs_dir = Path(__file__).parent / 'logs'
     logs_dir.mkdir(parents=True, exist_ok=True)
     file_handler = RotatingFileHandler(
@@ -48,7 +50,6 @@ if __name__ == "__main__":
     file_handler.setFormatter(logging.Formatter(log_format, datefmt=date_format))
     logging.getLogger().addHandler(file_handler)
 
-    host = config["connection"]["host"]
-    port = config["connection"]["port"]
+
     loop = asyncio.SelectorEventLoop()
     loop.run_until_complete(main())
