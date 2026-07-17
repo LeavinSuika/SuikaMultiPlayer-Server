@@ -1,0 +1,25 @@
+name: build
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v3
+        with:
+          name: Beta v${{ github.ref_name }}
+          allowUpdates: true
+          draft: false
+          prerelease: true
+          token: ${{ secrets.GITHUB_TOKEN }}
